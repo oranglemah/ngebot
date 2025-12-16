@@ -1,0 +1,7 @@
+services:
+  - type: worker
+    name: k12-verification-bot
+    env: python
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python k12_bot.py
