@@ -244,3 +244,4 @@ Educational/Testing purposes only.
 **Version:** 1.0.0  
 **Last Updated:** December 2025  
 **Python:** 3.8+
+POWERED BY ORANGLEMAH
