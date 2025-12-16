@@ -15,155 +15,190 @@ from document_generator import (
 
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 
-# Conversation states
+# States
 NAME, EMAIL, SCHOOL = range(3)
 user_data = {}
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Start conversation"""
     await update.message.reply_text(
         "🎓 K12 Teacher Verification Bot\n\n"
-        "I will help you verify your K12 teacher status.\n\n"
-        "Let's start! What's your full name?"
+        "Let's verify your K12 teacher status.\n\n"
+        "What's your full name?"
     )
     return NAME
 
 async def get_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Get teacher name"""
     user_id = update.effective_user.id
-    full_name = update.message.text.strip()
-    
-    user_data[user_id] = {'full_name': full_name}
+    user_data[user_id] = {'full_name': update.message.text.strip()}
     
     await update.message.reply_text(
-        f"✅ Name: {full_name}\n\n"
-        "What's your school email address?"
+        f"✅ Name: {user_data[user_id]['full_name']}\n\n"
+        "What's your school email?"
     )
     return EMAIL
 
 async def get_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Get teacher email"""
     user_id = update.effective_user.id
-    email = update.message.text.strip()
-    
-    user_data[user_id]['email'] = email
+    user_data[user_id]['email'] = update.message.text.strip()
     
     await update.message.reply_text(
-        f"✅ Email: {email}\n\n"
+        f"✅ Email: {user_data[user_id]['email']}\n\n"
         "What's your school name?"
     )
     return SCHOOL
 
 async def get_school(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Search schools"""
     user_id = update.effective_user.id
     school_name = update.message.text.strip()
-    
     user_data[user_id]['school_name'] = school_name
     
-    await update.message.reply_text("🔍 Searching schools...")
+    msg = await update.message.reply_text("🔍 Searching schools...")
     
+    # Hit API
     schools = await search_schools(school_name)
     
-    if not schools:
-        await update.message.reply_text(
-            "❌ No schools found!\n\n"
-            "Try another school name:"
+    # Debug
+    print(f"=== SEARCH DEBUG ===")
+    print(f"Query: {school_name}")
+    print(f"Results: {len(schools) if schools else 0}")
+    if schools and len(schools) > 0:
+        print(f"First school: {schools[0]}")
+    
+    # Jika tidak ada hasil
+    if not schools or len(schools) == 0:
+        await msg.edit_text(
+            f"❌ No schools found!\n\n"
+            f"Searched: {school_name}\n\n"
+            "Try different name:"
         )
         return SCHOOL
     
-    # Filter K12 dan HIGH_SCHOOL
-    k12_schools = [s for s in schools if s.get('type') in ['K12', 'HIGH_SCHOOL']]
-    
-    if not k12_schools:
-        await update.message.reply_text(
-            "❌ No K12/High School found!\n\n"
-            "Try another school name:"
-        )
-        return SCHOOL
-    
-    await display_school_options(update, k12_schools, user_id)
+    # Tampilkan hasil
+    await msg.delete()
+    await display_schools(update, schools, user_id)
     return ConversationHandler.END
 
 async def search_schools(school_name):
-    """Query SheerID API"""
+    """Hit SheerID API - EXACT seperti di Network tab"""
     url = "https://orgsearch.sheerid.net/rest/organization/search"
+    
     params = {
-        'query': school_name,
-        'organizationType': 'K12'  # API tetap pakai K12, tapi return HIGH_SCHOOL juga
+        'query': school_name
+    }
+    
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'application/json'
     }
     
     try:
-        response = requests.get(url, params=params, timeout=10)
+        response = requests.get(url, params=params, headers=headers, timeout=15)
+        
+        print(f"API URL: {response.url}")
+        print(f"Status: {response.status_code}")
+        
         if response.status_code == 200:
             data = response.json()
-            return data if isinstance(data, list) else []
-        return []
+            
+            # API return bisa list atau dict
+            if isinstance(data, list):
+                print(f"Got {len(data)} schools")
+                return data
+            elif isinstance(data, dict) and 'organizations' in data:
+                print(f"Got {len(data['organizations'])} schools")
+                return data['organizations']
+            else:
+                print(f"Unknown format: {type(data)}")
+                return []
+        else:
+            print(f"Error: Status {response.status_code}")
+            print(f"Response: {response.text[:200]}")
+            return []
+            
     except Exception as e:
-        print(f"Error searching: {e}")
+        print(f"Exception: {str(e)}")
         return []
 
-async def display_school_options(update, schools, user_id):
-    """Display school list"""
-    keyboard = []
-    message = f"🏫 SCHOOL SEARCH RESULTS\n\n"
-    message += f"Query: {user_data[user_id]['school_name']}\n"
-    message += f"Found: {len(schools)} results\n\n"
+async def display_schools(update, schools, user_id):
+    """Tampilkan list sekolah seperti di API"""
     
-    for idx, school in enumerate(schools[:10]):  # Tampilkan max 10
+    # Build message
+    text = f"🏫 FOUND {len(schools)} SCHOOLS\n\n"
+    text += f"Query: {user_data[user_id]['school_name']}\n\n"
+    
+    # Build buttons
+    keyboard = []
+    
+    for idx, school in enumerate(schools[:15]):  # Max 15
+        # Save ke user_data
         user_data[user_id][f'school_{idx}'] = school
         
-        school_name = school.get('name', 'Unknown')
-        location = f"{school.get('city', '')}, {school.get('state', '')}"
-        school_type = school.get('type', 'K12')
+        # Parse data
+        name = school.get('name', 'Unknown School')
+        city = school.get('city', '')
+        state = school.get('state', '')
+        school_type = school.get('type', 'SCHOOL')
         
-        message += f"{idx+1}. {school_name}\n"
-        message += f"   📍 {location}\n"
-        message += f"   🏷️ Type: {school_type}\n\n"
+        # Format lokasi
+        location = f"{city}, {state}" if city and state else city or state or "Unknown"
         
-        button = [InlineKeyboardButton(
-            f"{idx+1}. {school_name[:40]}",
-            callback_data=f"select_{user_id}_{idx}"
-        )]
-        keyboard.append(button)
+        # Add to message
+        text += f"{idx+1}. {name}\n"
+        text += f"   📍 {location}\n"
+        text += f"   🏷️ {school_type}\n\n"
+        
+        # Button text (potong jika panjang)
+        btn_text = name if len(name) <= 50 else name[:47] + "..."
+        
+        keyboard.append([
+            InlineKeyboardButton(
+                f"{idx+1}. {btn_text}",
+                callback_data=f"sel_{user_id}_{idx}"
+            )
+        ])
     
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(message, reply_markup=reply_markup)
+    await update.message.reply_text(text, reply_markup=reply_markup)
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle school selection"""
+    """User pilih sekolah"""
     query = update.callback_query
     await query.answer()
     
-    _, user_id_str, school_idx = query.data.split('_')
-    user_id = int(user_id_str)
-    
-    if user_id not in user_data:
-        await query.edit_message_text("❌ Session expired. Please /start again")
+    # Parse callback
+    parts = query.data.split('_')
+    if len(parts) != 3:
+        await query.edit_message_text("❌ Invalid selection")
         return
     
-    selected_school = user_data[user_id][f'school_{school_idx}']
-    school_name = selected_school['name']
+    user_id = int(parts[1])
+    school_idx = int(parts[2])
+    
+    # Get data
+    if user_id not in user_data or f'school_{school_idx}' not in user_data[user_id]:
+        await query.edit_message_text("❌ Session expired. /start again")
+        return
+    
+    school = user_data[user_id][f'school_{school_idx}']
+    teacher_name = user_data[user_id]['full_name']
+    teacher_email = user_data[user_id]['email']
+    school_name = school.get('name', 'Unknown')
     
     await query.edit_message_text(
-        f"✅ Selected: {school_name}\n"
-        f"Type: {selected_school.get('type', 'K12')}\n\n"
+        f"✅ Selected:\n{school_name}\n\n"
         f"⚙️ Generating documents..."
     )
     
-    teacher_name = user_data[user_id]['full_name']
-    teacher_email = user_data[user_id]['email']
-    
-    # Generate documents
+    # Generate docs
     try:
         id_card, faculty_id = generate_faculty_id(teacher_name, teacher_email, school_name)
         pay_stub = generate_pay_stub(teacher_name, teacher_email, school_name, faculty_id)
-        employment_letter = generate_employment_letter(teacher_name, teacher_email, school_name)
+        letter = generate_employment_letter(teacher_name, teacher_email, school_name)
         
-        # Send documents
+        # Send
         await query.message.reply_photo(
             photo=image_to_bytes(id_card),
-            caption=f"📇 Faculty ID Card\n{faculty_id}"
+            caption=f"📇 Faculty ID\n{faculty_id}"
         )
         
         await query.message.reply_photo(
@@ -172,46 +207,42 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
         await query.message.reply_photo(
-            photo=image_to_bytes(employment_letter),
-            caption="📄 Employment Verification Letter"
+            photo=image_to_bytes(letter),
+            caption="📄 Employment Letter"
         )
         
         await query.message.reply_text(
-            f"✅ VERIFICATION SUCCESS!\n\n"
+            f"✅ SUCCESS!\n\n"
             f"👤 {teacher_name}\n"
             f"🏫 {school_name}\n"
             f"📧 {teacher_email}\n\n"
-            f"🔗 Status: Documents Generated\n\n"
-            "Type /start to verify another teacher."
+            "/start to verify another"
         )
+        
     except Exception as e:
-        await query.message.reply_text(f"❌ Error generating documents: {str(e)}")
+        print(f"Error generating: {e}")
+        await query.message.reply_text(f"❌ Error: {str(e)}")
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Cancel conversation"""
-    await update.message.reply_text(
-        "❌ Cancelled.\n\n"
-        "Type /start to begin again."
-    )
+    await update.message.reply_text("❌ Cancelled. /start to begin")
     return ConversationHandler.END
 
 def main():
     if not BOT_TOKEN:
-        print("❌ BOT_TOKEN not found!")
+        print("❌ No BOT_TOKEN!")
         return
     
-    # Check server IP
+    # Check IP
     try:
-        ip = requests.get('https://api.ipify.org').text
+        ip = requests.get('https://api.ipify.org', timeout=5).text
         print(f"🌐 Server IP: {ip}")
-        print(f"🔗 Location: https://ipinfo.io/{ip}")
     except:
         pass
     
     app = Application.builder().token(BOT_TOKEN).build()
     
-    # Conversation handler
-    conv_handler = ConversationHandler(
+    # Conversation
+    conv = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
             NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)],
@@ -221,10 +252,10 @@ def main():
         fallbacks=[CommandHandler('cancel', cancel)],
     )
     
-    app.add_handler(conv_handler)
+    app.add_handler(conv)
     app.add_handler(CallbackQueryHandler(button_callback))
     
-    print("🎓 K12 Teacher Bot started...")
+    print("🎓 Bot started...")
     app.run_polling()
 
 if __name__ == '__main__':
