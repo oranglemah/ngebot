@@ -48,7 +48,7 @@ $env:BOT_TOKEN="your_telegram_bot_token_here"
 ### 3. Jalankan Bot
 
 ```bash
-python k12_teacher_bot.py
+python k12_bot.py
 ```
 
 ## 🚀 Cara Menggunakan
