@@ -359,12 +359,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             # Send success message
             await query.message.reply_text(
-                f"✅ *VERIFICATION SUCCESS!*\n\n"
+                f"✅ *UPLOAD DOC SUCCESS!*\n\n"
                 f"👤 *Name:* {full_name}\n"
                 f"🏫 *School:* {school_name}\n"
                 f"📧 *Email:* `{email}`\n"
                 f"🆔 *Faculty ID:* `{faculty_id}`\n\n"
-                f"🔗 *Status:* SUCCESS\n\n"
+                f"🔗 *Status:* UNDER REVIEW\n\n"
                 f"Type /start for another verification",
                 parse_mode='Markdown'
             )
