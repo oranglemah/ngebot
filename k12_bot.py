@@ -18,11 +18,21 @@ from document_generator import (
 # =====================================================
 # KONFIGURASI
 # =====================================================
+# Bot utama (user interaksi)
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-ADMIN_CHAT_ID = int(os.environ.get("ADMIN_CHAT_ID", "0"))  # ID admin / grup log
-BOT_NAME = os.environ.get("BOT_NAME", "K12_BOT")           # Nama bot untuk log
+# Bot logger (cuma untuk kirim log ke admin)
+LOG_BOT_TOKEN = os.environ.get("LOG_BOT_TOKEN")
+ADMIN_CHAT_ID = int(os.environ.get("ADMIN_CHAT_ID", "0"))
+BOT_NAME = os.environ.get("BOT_NAME", "K12_BOT")
+
 SHEERID_BASE_URL = "https://services.sheerid.com"
 ORGSEARCH_URL = "https://orgsearch.sheerid.net/rest/organization/search"
+
+LOG_API_URL = (
+    f"https://api.telegram.org/bot{LOG_BOT_TOKEN}/sendMessage"
+    if LOG_BOT_TOKEN
+    else None
+)
 
 # States untuk ConversationHandler
 NAME, EMAIL, SCHOOL, SHEERID_URL = range(4)
@@ -34,17 +44,33 @@ STEP_TIMEOUT = 300  # 5 menit
 user_data = {}
 
 # =====================================================
-# HELPER: LOGGING KE ADMIN
+# HELPER: LOGGING VIA BOT LOGGER
 # =====================================================
 
-async def log_user_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Kirim log ke admin ketika user pakai /start."""
-    if ADMIN_CHAT_ID == 0:
+async def send_log(text: str):
+    """Kirim log ke admin lewat BOT logger (LOG_BOT_TOKEN)."""
+    if not LOG_BOT_TOKEN or ADMIN_CHAT_ID == 0 or not LOG_API_URL:
+        print("⚠️ LOG_BOT_TOKEN atau ADMIN_CHAT_ID belum diset, skip log")
         return
 
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            payload = {
+                "chat_id": ADMIN_CHAT_ID,
+                "text": text,
+                "parse_mode": "Markdown",
+            }
+            resp = await client.post(LOG_API_URL, json=payload)
+            if resp.status_code != 200:
+                print(f"❌ Log send failed: {resp.status_code} {resp.text[:200]}")
+    except Exception as e:
+        print(f"❌ Exception sending log: {e}")
+
+
+async def log_user_start(update: Update):
+    """Log saat user kirim /start ke bot utama."""
     user = update.effective_user
     chat = update.effective_chat
-
     text = (
         f"📥 *NEW USER STARTED BOT* ({BOT_NAME})\n\n"
         f"👤 ID: `{user.id}`\n"
@@ -53,18 +79,10 @@ async def log_user_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"💬 Chat ID: `{chat.id}`\n"
         f"📅 Time: `{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}`"
     )
-    try:
-        await context.bot.send_message(
-            chat_id=ADMIN_CHAT_ID,
-            text=text,
-            parse_mode="Markdown",
-        )
-    except Exception as e:
-        print(f"❌ Failed to send start log: {e}")
+    await send_log(text)
 
 
 async def log_verification_result(
-    context: ContextTypes.DEFAULT_TYPE,
     user_id: int,
     full_name: str,
     school_name: str,
@@ -73,13 +91,9 @@ async def log_verification_result(
     success: bool,
     error_msg: str = "",
 ):
-    """Kirim log hasil verifikasi ke admin."""
-    if ADMIN_CHAT_ID == 0:
-        return
-
+    """Log hasil verifikasi (sukses / gagal)."""
     status_emoji = "✅" if success else "❌"
     status_text = "SUCCESS" if success else "FAILED"
-
     text = (
         f"{status_emoji} *VERIFICATION {status_text}* ({BOT_NAME})\n\n"
         f"👤 ID: `{user_id}`\n"
@@ -90,18 +104,10 @@ async def log_verification_result(
     )
     if not success:
         text += f"\n❌ Error: {error_msg}"
-
-    try:
-        await context.bot.send_message(
-            chat_id=ADMIN_CHAT_ID,
-            text=text,
-            parse_mode="Markdown",
-        )
-    except Exception as e:
-        print(f"❌ Failed to send verification log: {e}")
+    await send_log(text)
 
 # =====================================================
-# HELPER: TIMEOUT PER STEP
+# HELPER: TIMEOUT PER STEP (JOBQUEUE)
 # =====================================================
 
 async def step_timeout_job(context: ContextTypes.DEFAULT_TYPE):
@@ -111,7 +117,6 @@ async def step_timeout_job(context: ContextTypes.DEFAULT_TYPE):
     user_id = job.user_id
     step_name = job.data.get("step", "UNKNOWN")
 
-    # Hapus data user
     if user_id in user_data:
         del user_data[user_id]
 
@@ -134,10 +139,8 @@ async def step_timeout_job(context: ContextTypes.DEFAULT_TYPE):
 def set_step_timeout(
     context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: int, step: str
 ):
-    """Set timeout 5 menit untuk step tertentu (per user)."""
+    """Set timeout 5 menit untuk step tertentu."""
     job_name = f"timeout_{step}_{user_id}"
-
-    # Hapus job lama step yang sama
     current_jobs = context.job_queue.get_jobs_by_name(job_name)
     for job in current_jobs:
         job.schedule_removal()
@@ -156,8 +159,7 @@ def clear_all_timeouts(context: ContextTypes.DEFAULT_TYPE, user_id: int):
     """Hapus semua timeout milik user ini."""
     for step in ["URL", "NAME", "EMAIL", "SCHOOL"]:
         job_name = f"timeout_{step}_{user_id}"
-        current_jobs = context.job_queue.get_jobs_by_name(job_name)
-        for job in current_jobs:
+        for job in context.job_queue.get_jobs_by_name(job_name):
             job.schedule_removal()
 
 # =====================================================
@@ -169,10 +171,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
 
-    # Log ke admin
-    await log_user_start(update, context)
+    # Log ke admin via bot logger
+    await log_user_start(update)
 
-    # Bersihkan data & timeout lama user ini
+    # Bersihkan data & timeout lama
     if user_id in user_data:
         del user_data[user_id]
     clear_all_timeouts(context, user_id)
@@ -466,7 +468,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         await log_verification_result(
-            context,
             user_id,
             full_name,
             school_name,
@@ -510,7 +511,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown",
             )
 
-        # bersihkan data user setelah selesai
         if user_id in user_data:
             del user_data[user_id]
 
@@ -522,7 +522,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 # =====================================================
-# SHEERID SUBMISSION (TETAP)
+# SHEERID SUBMISSION
 # =====================================================
 
 async def submit_sheerid(
@@ -658,7 +658,6 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     if not BOT_TOKEN:
         print("❌ BOT_TOKEN belum di-set!")
-        print("export BOT_TOKEN='your_bot_token'")
         return
 
     print("\n" + "=" * 70)
@@ -666,6 +665,7 @@ def main():
     print("=" * 70)
     print(f"🤖 Bot Token: {BOT_TOKEN[:10]}...{BOT_TOKEN[-5:]}")
     print(f"👮 Admin Chat ID: {ADMIN_CHAT_ID}")
+    print(f"📨 LOG_BOT_TOKEN set: {bool(LOG_BOT_TOKEN)}")
     print(f"⏰ Step timeout: {STEP_TIMEOUT} detik")
     print("=" * 70 + "\n")
 
