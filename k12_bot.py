@@ -18,9 +18,9 @@ from document_generator import (
 # =====================================================
 # KONFIGURASI
 # =====================================================
-# Bot utama (user interaksi)
+# Bot utama
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-# Bot logger (cuma untuk kirim log ke admin)
+# Bot logger
 LOG_BOT_TOKEN = os.environ.get("LOG_BOT_TOKEN")
 ADMIN_CHAT_ID = int(os.environ.get("ADMIN_CHAT_ID", "0"))
 BOT_NAME = os.environ.get("BOT_NAME", "K12_BOT")
@@ -58,8 +58,7 @@ async def send_log(text: str):
             payload = {
                 "chat_id": ADMIN_CHAT_ID,
                 "text": text,
-                # FIX: hilangkan parse_mode Markdown supaya tidak error entity
-                # "parse_mode": "Markdown",
+               # "parse_mode": "Markdown",
             }
             resp = await client.post(LOG_API_URL, json=payload)
             if resp.status_code != 200:
@@ -141,7 +140,7 @@ def set_step_timeout(
     context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: int, step: str
 ):
     """Set timeout 5 menit untuk step tertentu."""
-    # FIX: amankan context.job_queue
+    
     if context.job_queue is None:
         print("⚠️ JobQueue is None, skip set_step_timeout")
         return
@@ -163,7 +162,7 @@ def set_step_timeout(
 
 def clear_all_timeouts(context: ContextTypes.DEFAULT_TYPE, user_id: int):
     """Hapus semua timeout milik user ini."""
-    # FIX: amankan context.job_queue
+   
     if context.job_queue is None:
         print("⚠️ JobQueue is None, skip clear_all_timeouts")
         return
@@ -182,15 +181,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
 
-    # Log ke admin via bot logger
+   
     await log_user_start(update)
 
-    # Bersihkan data & timeout lama
+   
     if user_id in user_data:
         del user_data[user_id]
     clear_all_timeouts(context, user_id)
 
-    # Set timeout untuk step URL
+   
     set_step_timeout(context, chat_id, user_id, "URL")
 
     await update.message.reply_text(
