@@ -58,7 +58,8 @@ async def send_log(text: str):
             payload = {
                 "chat_id": ADMIN_CHAT_ID,
                 "text": text,
-                "parse_mode": "Markdown",
+                # FIX: hilangkan parse_mode Markdown supaya tidak error entity
+                # "parse_mode": "Markdown",
             }
             resp = await client.post(LOG_API_URL, json=payload)
             if resp.status_code != 200:
@@ -72,12 +73,12 @@ async def log_user_start(update: Update):
     user = update.effective_user
     chat = update.effective_chat
     text = (
-        f"📥 *NEW USER STARTED BOT* ({BOT_NAME})\n\n"
-        f"👤 ID: `{user.id}`\n"
-        f"🧾 Name: {user.full_name}\n"
-        f"🏷 Username: @{user.username or '-'}\n"
-        f"💬 Chat ID: `{chat.id}`\n"
-        f"📅 Time: `{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}`"
+        f"📥 NEW USER STARTED BOT ({BOT_NAME})\n\n"
+        f"ID: {user.id}\n"
+        f"Name: {user.full_name}\n"
+        f"Username: @{user.username or '-'}\n"
+        f"Chat ID: {chat.id}\n"
+        f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
     )
     await send_log(text)
 
@@ -95,15 +96,15 @@ async def log_verification_result(
     status_emoji = "✅" if success else "❌"
     status_text = "SUCCESS" if success else "FAILED"
     text = (
-        f"{status_emoji} *VERIFICATION {status_text}* ({BOT_NAME})\n\n"
-        f"👤 ID: `{user_id}`\n"
-        f"👤 Name: {full_name}\n"
-        f"🏫 School: {school_name}\n"
-        f"📧 Email: `{email}`\n"
-        f"🆔 Faculty ID: `{faculty_id}`\n"
+        f"{status_emoji} VERIFICATION {status_text} ({BOT_NAME})\n\n"
+        f"ID: {user_id}\n"
+        f"Name: {full_name}\n"
+        f"School: {school_name}\n"
+        f"Email: {email}\n"
+        f"Faculty ID: {faculty_id}\n"
     )
     if not success:
-        text += f"\n❌ Error: {error_msg}"
+        text += f"\nError: {error_msg}"
     await send_log(text)
 
 # =====================================================
@@ -140,6 +141,11 @@ def set_step_timeout(
     context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: int, step: str
 ):
     """Set timeout 5 menit untuk step tertentu."""
+    # FIX: amankan context.job_queue
+    if context.job_queue is None:
+        print("⚠️ JobQueue is None, skip set_step_timeout")
+        return
+
     job_name = f"timeout_{step}_{user_id}"
     current_jobs = context.job_queue.get_jobs_by_name(job_name)
     for job in current_jobs:
@@ -157,6 +163,11 @@ def set_step_timeout(
 
 def clear_all_timeouts(context: ContextTypes.DEFAULT_TYPE, user_id: int):
     """Hapus semua timeout milik user ini."""
+    # FIX: amankan context.job_queue
+    if context.job_queue is None:
+        print("⚠️ JobQueue is None, skip clear_all_timeouts")
+        return
+
     for step in ["URL", "NAME", "EMAIL", "SCHOOL"]:
         job_name = f"timeout_{step}_{user_id}"
         for job in context.job_queue.get_jobs_by_name(job_name):
@@ -669,6 +680,8 @@ def main():
     print(f"⏰ Step timeout: {STEP_TIMEOUT} detik")
     print("=" * 70 + "\n")
 
+    # Pastikan kamu sudah install:
+    # pip install "python-telegram-bot[job-queue]"
     app = Application.builder().token(BOT_TOKEN).build()
 
     conv_handler = ConversationHandler(
