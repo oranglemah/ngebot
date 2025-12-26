@@ -181,15 +181,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
 
-   
     await log_user_start(update)
 
-   
     if user_id in user_data:
         del user_data[user_id]
     clear_all_timeouts(context, user_id)
 
-   
     set_step_timeout(context, chat_id, user_id, "URL")
 
     await update.message.reply_text(
@@ -413,6 +410,30 @@ async def display_schools(update: Update, schools: list, user_id: int):
     )
 
 # =====================================================
+# SHEERID STATUS CHECK
+# =====================================================
+
+async def check_sheerid_status(verification_id: str) -> dict:
+    """Cek status verifikasi dari SheerID (success / pending / error / docUpload / dll)."""
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            url = f"{SHEERID_BASE_URL}/rest/v2/verification/{verification_id}"
+            resp = await client.get(url)
+            if resp.status_code != 200:
+                msg = f"Status check failed: {resp.status_code}"
+                print("❌", msg)
+                return {"success": False, "status": "unknown", "message": msg}
+
+            data = resp.json()
+            step = data.get("currentStep", "unknown")
+            print(f"🔎 SheerID currentStep: {step}")
+            return {"success": True, "status": step, "data": data}
+        except Exception as e:
+            msg = f"Status check error: {str(e)}"
+            print("❌", msg)
+            return {"success": False, "status": "unknown", "message": msg}
+
+# =====================================================
 # BUTTON CALLBACK
 # =====================================================
 
@@ -455,7 +476,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         print(f"\n📄 Generating documents for {full_name}...")
 
-        # ---- PEMANGGILAN GENERATOR YANG SUDAH DIBENARKAN ----
+        # ---- PEMANGGILAN GENERATOR ----
         id_card, faculty_id, dept = generate_faculty_id(
             teacher_name=full_name,
             teacher_email=email,
@@ -475,7 +496,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             emp_id=faculty_id,
             department=dept,
         )
-        # ------------------------------------------------------
+        # -------------------------------
 
         pdf_bytes = image_to_bytes(pay_stub).getvalue()
         png_bytes = image_to_bytes(id_card).getvalue()
@@ -496,17 +517,30 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             png_bytes,
         )
 
+        # Cek status setelah upload dokumen
+        status_info = await check_sheerid_status(verification_id)
+        status = status_info.get("status", "unknown")
+
         await log_verification_result(
             user_id,
             full_name,
             school_name,
             email,
             faculty_id,
-            result["success"],
+            status == "success",
             result.get("message", ""),
         )
 
-        if result["success"]:
+        if not result["success"]:
+            await query.message.reply_text(
+                "❌ *VERIFICATION FAILED*\n\n"
+                f"Error: {result.get('message')}\n\n"
+                "Please try again or contact support.",
+                parse_mode="Markdown",
+            )
+
+        else:
+            # Kirim dokumen dulu
             await query.message.reply_photo(
                 photo=image_to_bytes(id_card),
                 caption=f"📇 *Faculty ID Card*\n`{faculty_id}`",
@@ -522,21 +556,33 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 caption="📄 *Employment Verification Letter*",
                 parse_mode="Markdown",
             )
+
+            if status == "success":
+                # Sudah APPROVED -> mirip halaman 'Status verified – Continue to OpenAI'
+                await query.message.reply_text(
+                    "✅ *VERIFICATION SUCCESS!*\n\n"
+                    "Your educator status has been *approved* by SheerID.\n"
+                    "You should now see a page like:\n"
+                    "`Status verified – Continue to OpenAI`.",
+                    parse_mode="Markdown",
+                )
+            elif status == "pending":
+                await query.message.reply_text(
+                    "⏳ *Documents uploaded successfully*\n\n"
+                    "Status: `PENDING REVIEW`\n"
+                    "You will see `Status verified – Continue to OpenAI` once SheerID approves it.",
+                    parse_mode="Markdown",
+                )
+            else:
+                await query.message.reply_text(
+                    f"ℹ️ *Documents submitted*\n\n"
+                    f"Current SheerID step: `{status}`\n"
+                    "If it becomes `success`, you will get a `Status verified` page.",
+                    parse_mode="Markdown",
+                )
+
             await query.message.reply_text(
-                f"✅ *UPLOAD DOC SUCCESS!*\n\n"
-                f"👤 *Name:* {full_name}\n"
-                f"🏫 *School:* {school_name}\n"
-                f"📧 *Email:* `{email}`\n"
-                f"🆔 *Faculty ID:* `{faculty_id}`\n\n"
-                f"🔗 *Status:* UNDER REVIEW\n\n"
                 f"Type /start for another verification",
-                parse_mode="Markdown",
-            )
-        else:
-            await query.message.reply_text(
-                "❌ *VERIFICATION FAILED*\n\n"
-                f"Error: {result.get('message')}\n\n"
-                "Please try again or contact support.",
                 parse_mode="Markdown",
             )
 
@@ -652,7 +698,8 @@ async def submit_sheerid(
             )
             print(f"✅ Complete upload: {complete_resp.status_code}")
 
-            return {"success": True, "message": "Submitted successfully"}
+            # Di sini SheerID biasanya pindah ke step 'pending' untuk review. [web:8]
+            return {"success": True, "message": "Documents uploaded, waiting for review"}
 
         except httpx.TimeoutException:
             msg = "Request timeout - please try again"
