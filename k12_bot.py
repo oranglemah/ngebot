@@ -454,9 +454,28 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         print(f"\n📄 Generating documents for {full_name}...")
-        id_card, faculty_id = generate_faculty_id(full_name, email, school_name)
-        pay_stub = generate_pay_stub(full_name, email, school_name, faculty_id)
-        letter = generate_employment_letter(full_name, email, school_name)
+
+        # ---- PEMANGGILAN GENERATOR YANG SUDAH DIBENARKAN ----
+        id_card, faculty_id, dept = generate_faculty_id(
+            teacher_name=full_name,
+            teacher_email=email,
+            school_name=school_name,
+        )
+        pay_stub = generate_pay_stub(
+            teacher_name=full_name,
+            teacher_email=email,
+            school_name=school_name,
+            emp_id=faculty_id,
+            department=dept,
+        )
+        letter = generate_employment_letter(
+            teacher_name=full_name,
+            teacher_email=email,
+            school_name=school_name,
+            emp_id=faculty_id,
+            department=dept,
+        )
+        # ------------------------------------------------------
 
         pdf_bytes = image_to_bytes(pay_stub).getvalue()
         png_bytes = image_to_bytes(id_card).getvalue()
