@@ -3,6 +3,7 @@ from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
     MessageHandler, filters, ContextTypes, ConversationHandler
 )
+from telegram.request import HTTPXRequest
 import httpx
 import re
 import os
@@ -311,24 +312,35 @@ async def get_school(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     set_step_timeout(context, chat_id, user_id, "SCHOOL")
 
-    msg = await update.message.reply_text(
-        f"⚙️ Searching for schools matching: *{school_name}*\n"
-        "Please wait...",
-        parse_mode="Markdown",
-    )
+    try:
+        msg = await update.message.reply_text(
+            f"⚙️ Searching for schools matching: *{school_name}*\n"
+            "Please wait...",
+            parse_mode="Markdown",
+        )
+    except Exception as e:
+        print(f"❌ Error sending search message: {e}")
+        return ConversationHandler.END
 
     schools = await search_schools(school_name)
 
     if not schools:
-        await msg.edit_text(
-            "❌ *No schools found!*\n\n"
-            "Try a different school name:\n\n"
-            "*⏰ Kamu punya 5 menit lagi*",
-            parse_mode="Markdown",
-        )
-        return SCHOOL
+        try:
+            await msg.edit_text(
+                "❌ *No schools found or SheerID timeout!*\n\n"
+                "Try a different school name later.\n\n"
+                "*⏰ Kamu bisa /start lagi*",
+                parse_mode="Markdown",
+            )
+        except Exception as e:
+            print(f"❌ Error editing message: {e}")
+        return ConversationHandler.END
 
-    await msg.delete()
+    try:
+        await msg.delete()
+    except Exception as e:
+        print(f"⚠️ Failed to delete temp message: {e}")
+
     await display_schools(update, schools, user_id)
 
     clear_all_timeouts(context, user_id)
@@ -340,7 +352,7 @@ async def get_school(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def search_schools(query: str) -> list:
     """Search schools via SheerID OrgSearch (K12 + HIGH_SCHOOL)."""
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=10.0) as client:  # timeout dipersempit
         all_schools = []
 
         for school_type in ["K12", "HIGH_SCHOOL"]:
@@ -356,6 +368,9 @@ async def search_schools(query: str) -> list:
                 data = resp.json()
                 if isinstance(data, list):
                     all_schools.extend(data)
+            except httpx.TimeoutException:
+                print(f"❌ SheerID orgsearch timeout for {school_type}")
+                continue
             except Exception as e:
                 print(f"❌ Error searching {school_type}: {e}")
                 continue
@@ -415,7 +430,7 @@ async def display_schools(update: Update, schools: list, user_id: int):
 
 async def check_sheerid_status(verification_id: str) -> dict:
     """Cek status verifikasi dari SheerID (success / pending / error / docUpload / dll)."""
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=10.0) as client:
         try:
             url = f"{SHEERID_BASE_URL}/rest/v2/verification/{verification_id}"
             resp = await client.get(url)
@@ -428,6 +443,10 @@ async def check_sheerid_status(verification_id: str) -> dict:
             step = data.get("currentStep", "unknown")
             print(f"🔎 SheerID currentStep: {step}")
             return {"success": True, "status": step, "data": data}
+        except httpx.TimeoutException:
+            msg = "Status check timeout"
+            print("❌", msg)
+            return {"success": False, "status": "unknown", "message": msg}
         except Exception as e:
             msg = f"Status check error: {str(e)}"
             print("❌", msg)
@@ -438,6 +457,7 @@ async def check_sheerid_status(verification_id: str) -> dict:
 # =====================================================
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    print(">>> button_callback called")
     query = update.callback_query
     await query.answer()
 
@@ -453,7 +473,15 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    school = user_data[user_id][f"school_{school_idx}"]
+    school = user_data[user_id].get(f"school_{school_idx}")
+    if not school:
+        await query.edit_message_text(
+            "❌ *School data not found*\n\n"
+            "Please /start again",
+            parse_mode="Markdown",
+        )
+        return
+
     school_name = school.get("name")
     school_type = school.get("type", "K12")
     school_id = school.get("id")
@@ -517,7 +545,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             png_bytes,
         )
 
-        # Cek status setelah upload dokumen
+        # Cek status setelah upload dokumen (walau mungkin timeout)
         status_info = await check_sheerid_status(verification_id)
         status = status_info.get("status", "unknown")
 
@@ -558,7 +586,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
             if status == "success":
-                # Sudah APPROVED -> mirip halaman 'Status verified – Continue to OpenAI'
                 await query.message.reply_text(
                     "✅ *VERIFICATION SUCCESS!*\n\n"
                     "Your educator status has been *approved* by SheerID.\n"
@@ -582,7 +609,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
 
             await query.message.reply_text(
-                f"Type /start for another verification",
+                "Type /start for another verification",
                 parse_mode="Markdown",
             )
 
@@ -609,7 +636,7 @@ async def submit_sheerid(
     pdf_data: bytes,
     png_data: bytes,
 ) -> dict:
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=10.0) as client:  # timeout dipersempit
         try:
             print(f"\n🚀 Starting SheerID submission... ID: {verification_id}")
 
@@ -698,11 +725,10 @@ async def submit_sheerid(
             )
             print(f"✅ Complete upload: {complete_resp.status_code}")
 
-            # Di sini SheerID biasanya pindah ke step 'pending' untuk review. [web:8]
             return {"success": True, "message": "Documents uploaded, waiting for review"}
 
         except httpx.TimeoutException:
-            msg = "Request timeout - please try again"
+            msg = "Request timeout to SheerID - please try again"
             print("❌", msg)
             return {"success": False, "message": msg}
         except Exception as e:
@@ -745,9 +771,15 @@ def main():
     print(f"⏰ Step timeout: {STEP_TIMEOUT} detik")
     print("=" * 70 + "\n")
 
-    # Pastikan kamu sudah install:
-    # pip install "python-telegram-bot[job-queue]"
-    app = Application.builder().token(BOT_TOKEN).build()
+    # Request Telegram dengan timeout lebih besar (mengurangi telegram.error.TimedOut).
+    request = HTTPXRequest(
+        read_timeout=30,
+        write_timeout=30,
+        connect_timeout=10,
+        pool_timeout=10,
+    )  # [web:44]
+
+    app = Application.builder().token(BOT_TOKEN).request(request).build()
 
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
