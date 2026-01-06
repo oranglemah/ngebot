@@ -1212,15 +1212,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "✅ *Data submitted to SheerID!*\n\n"
             f"📧 Monitoring email: `{temp_email}`\n"
             "🔄 Waiting for verification email...\n\n"
-            "⏰ Bot akan otomatis:
-"
-            "1️⃣ Detect email dari SheerID
-"
-            "2️⃣ Klik verification link
-"
-            "3️⃣ Upload dokumen jika diperlukan
-
-"
+            "⏰ Bot akan otomatis:\n"
+            "1️⃣ Detect email dari SheerID\n"
+            "2️⃣ Klik verification link\n"
+            "3️⃣ Upload dokumen jika diperlukan\n\n"
             "*Tunggu maksimal 5 menit...*",
             parse_mode="Markdown"
         )
